@@ -3,26 +3,41 @@ package main
 import (
 	"fmt"
 	"net"
-  "strings"
+	"strings"
 )
 
 func main() {
-  // Create a server
+	// Create a server
 	l, err := net.Listen("tcp", ":6379")
 	if err != nil {
 		fmt.Println(err)
-    return
+		return
 	}
 
-  // Create a AOF
-  aof, err := NewAof("database.aof")
-  if err != nil {
-    fmt.Println(err)
-    return
-  }
-  defer aof.Close()
+	// Create a AOF
+	aof, err := NewAof("database.aof")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer aof.Close()
 
-  // Listen for connections
+  // Read the AOF
+  aof.Read(func(value Value) {
+    fmt.Println(value)
+    command := strings.ToUpper(value.array[0].bulk)
+    args := value.array[1:]
+
+    handler, ok := Handlers[command]
+
+    if !ok {
+      fmt.Println("Invalid command: ", command)
+      return
+    }
+    handler(args)
+  })
+
+	// Listen for connections
 	conn, err := l.Accept()
 	if err != nil {
 		fmt.Println(err)
@@ -43,36 +58,34 @@ func main() {
 			return
 		}
 
-    if value.typ != "array" {
-      fmt.Println("Invalid request, expected array")
-      continue
-    }
-    if len(value.array) == 0 {
-      fmt.Println("invalid request, expected array of length more than 1")
-      continue
-    }
-    
-    command :=   strings.ToUpper(value.array[0].bulk)
-    args := value.array[1:]
+		if value.typ != "array" {
+			fmt.Println("Invalid request, expected array")
+			continue
+		}
+		if len(value.array) == 0 {
+			fmt.Println("invalid request, expected array of length more than 1")
+			continue
+		}
 
-    writer := NewWriter(conn)
-    
-    handler, ok := Handlers[command]
+		command := strings.ToUpper(value.array[0].bulk)
+		args := value.array[1:]
 
-    if !ok {
-      fmt.Println("Invalid command: ", command)
-      
-      writer.Write(Value{typ: "string", str: "OK"})
-      continue
-    }
+		writer := NewWriter(conn)
 
-    if command == "SET" {
-      aof.Write(value)
-    }
-    
-    result := handler(args)
-    writer.Write(result)
+		handler, ok := Handlers[command]
+
+		if !ok {
+			fmt.Println("Invalid command: ", command)
+
+			writer.Write(Value{typ: "string", str: "OK"})
+			continue
+		}
+
+		if command == "SET" {
+			aof.Write(value)
+		}
+
+		result := handler(args)
+		writer.Write(result)
 	}
 }
-
-
